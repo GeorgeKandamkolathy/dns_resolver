@@ -18,7 +18,7 @@ public class Client {
         InetAddress IPAddress = InetAddress.getByName(args[0]);
         int serverPort = Integer.parseInt(args[1]); 
         
-        DatagramSocket clientSocket = new DatagramSocket();
+        DatagramSocket clientSocket = new DatagramSocket(3000);
         
         Request request = new Request(domains);
 
