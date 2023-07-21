@@ -1,6 +1,7 @@
 import java.io.*;
 import java.net.*;
 import java.util.HexFormat;
+import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeoutException;
@@ -10,37 +11,31 @@ class NetworkService implements Runnable {
 
     private final ExecutorService pool;
     private final String[] roots;    
-    private final int port;
+    private final DatagramSocket socket;
+    private final int timeout;
 
-    public NetworkService(int port, int poolSize, String[] roots) throws IOException {
+    public NetworkService(int port, int poolSize, String[] roots, int timeout) throws IOException {
         pool = Executors.newFixedThreadPool(poolSize);
+        this.socket = new DatagramSocket(port);
         this.roots = roots;
-        this.port = port;
+        this.timeout = timeout;
     }
 
     public void run() {
         for (;;){
-            try (DatagramSocket socket = new DatagramSocket(port)) {
-                byte[] queryData =new byte[1024];
-                    
-                DatagramPacket queryPacket = new DatagramPacket(queryData,queryData.length);
-
-                try {
-                    socket.receive(queryPacket);
-                    socket.close();
-                    System.out.println("RECEIEVED");
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
+            byte[] queryData =new byte[1024];
                 
-                try {
-                    pool.execute(new Handler(roots, queryPacket));
-                } catch (SocketException e) {
-                    // TODO Auto-generated catch block
-                    e.printStackTrace();
-                }
+            DatagramPacket queryPacket = new DatagramPacket(queryData,queryData.length);
+
+            try {
+                socket.receive(queryPacket);
+            } catch (IOException e) {
+                e.printStackTrace();
+            }
+            
+            try {
+                pool.execute(new Handler(roots, queryPacket, timeout));
             } catch (SocketException e) {
-                // TODO Auto-generated catch block
                 e.printStackTrace();
             }
         }
@@ -54,11 +49,25 @@ class Handler implements Runnable {
     private final String[] roots;    
     private final DatagramPacket queryPacket;    
 
-    Handler(String[] roots, DatagramPacket queryPacket) throws SocketException {
-        this.socket =  new DatagramSocket(53);
+    Handler( String[] roots, DatagramPacket queryPacket, int timeout) throws SocketException {
+        Random rand = new Random();
+
+        int id = rand.nextInt(64511);
+        id += 1024;
+        DatagramSocket outputSocket;
+        try{
+            outputSocket = new DatagramSocket(id);
+        }
+        catch (Exception e) {
+            id = rand.nextInt(64511);
+            id += 1024;
+            outputSocket = new DatagramSocket(id);
+        }
+        this.socket = outputSocket;
+
+        this.socket.setSoTimeout(timeout);
         this.roots = roots;
         this.queryPacket = queryPacket;
-        System.out.println(queryPacket.getData());
     }
 
     static int trim(byte[] bytes)
@@ -83,7 +92,6 @@ class Handler implements Runnable {
 
         DatagramPacket receivePacket = new DatagramPacket(receiveData,receiveData.length);
         
-        this.socket.setSoTimeout(10000);
         try{
             this.socket.receive(receivePacket);
         }
@@ -101,71 +109,94 @@ class Handler implements Runnable {
             return null;
         }
         for (String nameServer : data.getNameServersAddress()){
-            Response response = this.makeRequest(nameServer, 53, queryData);
-            if (response.getAnswersCount() > 0) {
-                return response;
-            }
-            else if (response.isError()){
-                if (response.errorCode() == 3 && !response.isAuthority()){
-                    return recursion(response, queryData, recursionCount+1);
-                }
-                else{
+            try{
+                Response response = this.makeRequest(nameServer, 53, queryData);
+
+                if (response.getAnswersCount() > 0) {
                     return response;
                 }
+                else if (response.isError()){
+                    if (response.errorCode() == 3 && !response.isAuthority()){
+                        return recursion(response, queryData, recursionCount+1);
+                    }
+                    else{
+                        return response;
+                    }
+                }
+                else {
+                    return recursion(response, queryData, recursionCount+1);
+                }
             }
-            else {
-                return recursion(response, queryData, recursionCount+1);
+            catch (SocketTimeoutException ex){
+                continue;
             }
         }
         return data;
     }
-    @Override
-    public void run() {
 
+    private void rootSearch(byte[] requestData) {
         try {
             for (int i = 0; i < roots.length; i++){
 
                 try{
-                    Response response = makeRequest(roots[i], 53, queryPacket.getData());
+                    Response response = makeRequest(roots[i], 53, requestData);
 
-                    if (response.getAnswersCount() > 0){
-                        DatagramPacket sendPacket=new DatagramPacket(response.getRawResponse(), response.getRawResponse().length, queryPacket.getAddress(), 3000);
+                    if (response.errorCode() == 1 || response.errorCode() == 2){
+                        DatagramPacket sendPacket=new DatagramPacket(response.getRawResponse(), response.getRawResponse().length, queryPacket.getAddress(), queryPacket.getPort());
                 
                         socket.send(sendPacket);
-                        socket.close();
-                        return;
+                        break;                    
+                    }
+
+                    if (response.getAnswersCount() > 0){
+                        if (response.getAnswerType() == 5){
+                            Request CNAMErequest = new Request(response.getAnswersAddress()[1]);
+                            rootSearch(CNAMErequest.getRequest());
+                        }
+
+                        DatagramPacket sendPacket=new DatagramPacket(response.getRawResponse(), response.getRawResponse().length, queryPacket.getAddress(), queryPacket.getPort());
+                
+                        socket.send(sendPacket);
+                        break;
                     }
                     else if (response.getNameServerCount() > 0){
-                        response = recursion(response, queryPacket.getData(), 0);
+                        response = recursion(response, requestData, 0);
                         if (response != null){
                             if (response.getAnswersCount() > 0 || (response.errorCode() == 3 && response.isAuthority())){
                                 
-                                DatagramPacket sendPacket=new DatagramPacket(response.getRawResponse(), response.getRawResponse().length,queryPacket.getAddress(), 3000);
+                                if (response.getAnswerType() == 5){
+                                    Request CNAMErequest = new Request(response.getAnswersAddress()[0]);
+                                    rootSearch(CNAMErequest.getRequest());
+                                }
+
+                                DatagramPacket sendPacket=new DatagramPacket(response.getRawResponse(), response.getRawResponse().length,queryPacket.getAddress(), queryPacket.getPort());
                     
                                 socket.send(sendPacket);
-                                socket.close();
-                                return;
+                                break;
                             }
                         }
                     }
 
                     if (i == roots.length-1){
-                        DatagramPacket sendPacket=new DatagramPacket(response.getRawResponse(), response.getRawResponse().length,queryPacket.getAddress(), 3000);
+                        DatagramPacket sendPacket=new DatagramPacket(response.getRawResponse(), response.getRawResponse().length,queryPacket.getAddress(), queryPacket.getPort());
                 
                         socket.send(sendPacket);
-                        socket.close();
-                        return;
+                        break;
                     }
                 }
-                catch(SocketTimeoutException e){
+                catch (SocketTimeoutException e){
                     continue;
                 }
             }
-            socket.close();
             return;
         } catch (IOException ex) {
             
         }
+    }
+
+    @Override
+    public void run() {
+        rootSearch(queryPacket.getData());
     }
     
 }
@@ -174,6 +205,34 @@ class Handler implements Runnable {
 public class Resolver {
 
     public static void main(String[] args)throws Exception {
+        
+        if (args.length < 1){
+            System.out.println("Error: Too few arguments");
+            System.out.println("Resolver port [timeout = 5]");
+            return;
+        }
+
+
+        int timeout = 5000;
+
+        int port = 5300;
+
+        try {
+            port = Integer.parseInt(args[0]); 
+
+    
+            if (args.length > 3){
+                timeout = Integer.parseInt(args[2]) * 1000;
+            }
+        }
+        catch (Exception e) {
+            System.out.println("Error: Invalid Arguments");
+            System.out.println("Resolver port [timeout = 5]");
+            return;
+        }
+
+
+
         String[] roots = new String[14];
 
         BufferedReader reader;
@@ -195,7 +254,8 @@ public class Resolver {
 			e.printStackTrace();
 		}
 
-        NetworkService service = new NetworkService(5300, 10, roots);
+        NetworkService service = new NetworkService(port, 6, roots, timeout);
+        System.out.println("Listening on port " + port);
         service.run();
     }
 

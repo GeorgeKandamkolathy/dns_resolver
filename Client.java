@@ -9,18 +9,40 @@ public class Client {
     public static void main(String[] args)throws Exception {
 
         if (args.length < 3){
-            System.out.println("Too few arguments");
+            System.out.println("Error: Too few arguments");
+            System.out.println("Client resolved_ip resolver_port query_name [timeout=5]");
             return;
         }
 
-        String[] domains = args[2].split("\\.", 0);
-
         InetAddress IPAddress = InetAddress.getByName(args[0]);
         int serverPort = Integer.parseInt(args[1]); 
+        String name = args[2];
         
-        DatagramSocket clientSocket = new DatagramSocket(3000);
+        int timeout = 5000;
+
+        if (args.length > 3){
+            timeout = Integer.parseInt(args[3]) * 1000;
+        }
+
+        Random rand = new Random();
+
+        int id = rand.nextInt(64511);
+        id += 1024;
+
+        DatagramSocket clientSocket;
+
+        try{
+            clientSocket = new DatagramSocket(id);
+        }
+        catch (Exception e) {
+            id = rand.nextInt(64511);
+            id += 1024;
+            clientSocket = new DatagramSocket(id);
+        }
+
+        clientSocket.setSoTimeout(timeout);
         
-        Request request = new Request(domains);
+        Request request = new Request(name);
 
         DatagramPacket sendPacket=new DatagramPacket(request.getRequest(),request.getCursor(),IPAddress,serverPort);
         
@@ -30,36 +52,41 @@ public class Client {
         
         DatagramPacket receivePacket = new DatagramPacket(receiveData,receiveData.length);
 
-        clientSocket.receive(receivePacket);
+        try {
+            clientSocket.receive(receivePacket);
+        }catch (SocketTimeoutException ex){
+            System.out.println("\n<-> " + args[2] + " <->");
+
+            System.out.println("SERVER TIMEOUT");
+            clientSocket.close();
+            return;
+        }
 
         byte[] responseData = receivePacket.getData();
 
         Response response = new Response(responseData);
-        
-        for (int i = 0; i < response.getAnswersCount(); i++){
-            System.out.print("Is Authority: " );
-            if (response.isAuthority()){
-                System.out.println("True");
-            }
-            else {
-                System.out.println("False");
-            }
 
-            System.out.print("Is Truncated: " );
-            if (response.isTruncated()){
-                System.out.println("True");
-            }
-            else {
-                System.out.println("False");
-            }
-            System.out.println(response.getAnswersNames()[i]);
-            System.out.println(response.getAnswersAddress()[i]);
+
+        System.out.println("\n <-> " + args[2] + " <->");
+        
+        System.out.println(";; ->>HEADER<<-  status: " + response.errorName() + ", id: " + response.getId());
+
+        System.out.print(";; flags: ");
+        if (response.isAuthority()){
+            System.out.print("aa ");
+        }
+        
+        if (response.isTruncated()){
+            System.out.print("tc ");
         }
 
-        System.out.println("NO ANSWERS");
-        System.out.println(response.getAnswersCount());
+        System.out.println("\n" + ";; ANSWER: " + response.getAnswersCount() + "\n");
 
-
+        System.out.println(";; ANSWER SECTION: ");
+        for (int i = 0; i < response.getAnswersCount(); i++){
+            System.out.println(response.getAnswersNames()[i] + "    " + response.getAnswersAddress()[i]);
+        }
+        System.out.println("");
 
         clientSocket.close();
     }

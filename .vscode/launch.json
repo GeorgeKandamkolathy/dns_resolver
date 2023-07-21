@@ -24,7 +24,9 @@
             "name": "Resolver",
             "request": "launch",
             "mainClass": "Resolver",
-            "projectName": "Assignment_81dcaec3"
+            "projectName": "Assignment_81dcaec3",
+            "args": ["5300"]
+
         }
     ]
 }

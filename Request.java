@@ -8,8 +8,10 @@ public class Request {
     private String[] domains;
     private byte[] requestData; 
 
-    public Request(String[] domainsList) {
-        domains = domainsList;
+    public Request(String name) {
+         
+        domains = name.split("\\.", 0);        
+        
         this.requestData=new byte[512];
 
         Random rand = new Random();
