@@ -1,11 +1,8 @@
 import java.io.*;
 import java.net.*;
-import java.util.HexFormat;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.TimeoutException;
-import java.util.Arrays;
 
 class NetworkService implements Runnable {
 
@@ -48,6 +45,7 @@ class Handler implements Runnable {
     private final DatagramSocket socket;
     private final String[] roots;    
     private final DatagramPacket queryPacket;    
+    private int actions;
 
     Handler( String[] roots, DatagramPacket queryPacket, int timeout) throws SocketException {
         Random rand = new Random();
@@ -68,6 +66,7 @@ class Handler implements Runnable {
         this.socket.setSoTimeout(timeout);
         this.roots = roots;
         this.queryPacket = queryPacket;
+        this.actions = 10;
     }
 
     static int trim(byte[] bytes)
@@ -84,14 +83,13 @@ class Handler implements Runnable {
     public Response makeRequest(String address, int serverPort, byte[] data) throws IOException{
         InetAddress IPAddress = InetAddress.getByName(address);
         
-        DatagramPacket sendPacket=new DatagramPacket(data,trim(data),IPAddress,serverPort);
+        DatagramPacket sendPacket = new DatagramPacket(data,trim(data),IPAddress,serverPort);
 
         this.socket.send(sendPacket);
 
-        byte[] receiveData=new byte[1024];
+        byte[] receiveData = new byte[1024];
 
         DatagramPacket receivePacket = new DatagramPacket(receiveData,receiveData.length);
-        
         try{
             this.socket.receive(receivePacket);
         }
@@ -99,35 +97,74 @@ class Handler implements Runnable {
             throw e;
         }
 
-        Response response = new Response(receiveData);
-
+        Response response = new Response(receivePacket);
+        this.actions -= 1;
         return response;
     }
 
     public Response recursion(Response data, byte[] queryData, int recursionCount) throws IOException {
-        if (recursionCount > 3){
+        if (recursionCount > 3) {
             return null;
         }
-        for (String nameServer : data.getNameServersAddress()){
+        for (String address : data.getAdditionalResourcesAddress()) {
+            if (address == null) {
+                continue;
+            }
             try{
-                Response response = this.makeRequest(nameServer, 53, queryData);
+                Response response = this.makeRequest(address, 53, queryData);
 
-                if (response.getAnswersCount() > 0) {
+                if (response.getAnswersCount() > 0 || actions <= 0) {
                     return response;
                 }
+
                 else if (response.isError()){
-                    if (response.errorCode() == 3 && !response.isAuthority()){
+                    if (response.errorCode() == 3 && !response.isAuthority()) {
                         return recursion(response, queryData, recursionCount+1);
                     }
-                    else{
+                    else {
                         return response;
                     }
                 }
+
                 else {
                     return recursion(response, queryData, recursionCount+1);
                 }
             }
-            catch (SocketTimeoutException ex){
+            catch (SocketTimeoutException ex) {
+                continue;
+            }
+        }
+
+        for (String address : data.getNameServersAddress()) {
+            try{
+                Request request = new Request(address);
+                String queryAddress = data.getPacket().getAddress().toString();
+                if (data.getPacket().getAddress().toString().charAt(0) == '/'){
+                    queryAddress = data.getPacket().getAddress().toString().substring(1);
+                }
+
+                Response response = this.makeRequest(queryAddress, data.getPacket().getPort(), request.getRequest());
+                
+                response = this.makeRequest(address, 53, queryData);
+
+                if (response.getAnswersCount() > 0 || actions <= 0) {
+                    return response;
+                }
+
+                else if (response.isError()){
+                    if (response.errorCode() == 3 && !response.isAuthority()) {
+                        return recursion(response, queryData, recursionCount+1);
+                    }
+                    else {
+                        return response;
+                    }
+                }
+
+                else {
+                    return recursion(response, queryData, recursionCount+1);
+                }
+            }
+            catch (SocketTimeoutException ex) {
                 continue;
             }
         }
@@ -141,7 +178,7 @@ class Handler implements Runnable {
                 try{
                     Response response = makeRequest(roots[i], 53, requestData);
 
-                    if (response.errorCode() == 1 || response.errorCode() == 2){
+                    if (response.errorCode() == 1 || response.errorCode() == 2 || actions <= 0){
                         DatagramPacket sendPacket=new DatagramPacket(response.getRawResponse(), response.getRawResponse().length, queryPacket.getAddress(), queryPacket.getPort());
                 
                         socket.send(sendPacket);

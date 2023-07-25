@@ -33,6 +33,8 @@ then
     usage
 fi
 
+filename="$1"
+shift
 lang="$1"
 shift
 numclients="$1"
@@ -84,15 +86,17 @@ i=1
 pids=
 echo "\nspawning clients...\n"
 
-while [ "$i" -le "$numclients" ]
-do
-    out="client${i}.out"
-    echo "${i}. $client $clientargs > $out &"
-    eval "$client $clientargs" > "$out" &
+
+out="client3.out"
+
+
+while IFS= read -r line; do
+    echo "${i}. $client $clientargs $line > $out &"
+    eval "$client $clientargs $line 20" >> "$out" &
     pids="$pids $!"
     sleep "$delay"
     i=$((i+1))
-done
+done < $filename
 
 i=1
 echo "\nwaiting for clients...\n"

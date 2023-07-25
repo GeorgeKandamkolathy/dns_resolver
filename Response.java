@@ -6,6 +6,7 @@ import java.util.Random;
 
 public class Response {
 
+    private DatagramPacket packet;
     private int cursor;
     private byte[] data;
     private int response_id;
@@ -21,10 +22,12 @@ public class Response {
     private int answerType;
     private String[] nameServersName;
     private String[] nameServersAddress;
+    private String[] additionalResourcesName;
+    private String[] additionalResourcesAddress;
 
-
-    public Response(byte[] responseData) {
-        data = responseData;
+    public Response(DatagramPacket responseData) {
+        packet = responseData;
+        data = packet.getData();
         cursor = 11;
         response_id = this.data[1] & 0xFF;
         QR = this.data[2] >> 7;
@@ -38,13 +41,14 @@ public class Response {
         this.answersAddress = new String[ANCOUNT];
         this.nameServersName = new String[NSCOUNT];
         this.nameServersAddress = new String[NSCOUNT];
+        this.additionalResourcesName = new String[ARCOUNT];
+        this.additionalResourcesAddress = new String[ARCOUNT];
 
         while(this.data[cursor] != 1){
             cursor += 1;
         }
         
         cursor += 3;
-
 
         for (int resI = 0; resI < ANCOUNT; resI++){
 
@@ -63,6 +67,17 @@ public class Response {
             this.nameServersAddress[resI] = getServerName();
             cursor += 1;
         }
+
+        for (int resI = 0; resI < ARCOUNT; resI++){
+            this.additionalResourcesName[resI] = getName();
+            cursor += 2;
+            int  answerType = (int)this.data[cursor];
+            cursor += 8;
+            String answer = parseAnswer();
+            if (answerType == 1){
+                this.additionalResourcesAddress[resI] = answer;
+            }
+        }
     }
 
     private String getCompressedName(int compressedCursor) {
@@ -70,8 +85,10 @@ public class Response {
         byte byteVal = (byte)HexFormat.fromHexDigits("C0");
 
 
-        if (this.data[compressedCursor] != byteVal){
+        if (this.data[compressedCursor] == byteVal){
             compressedCursor += 1;
+            address += getCompressedName(this.data[compressedCursor] & 0xFF);
+            return address;
         }
 
         while (this.data[compressedCursor] != 0) {
@@ -81,7 +98,7 @@ public class Response {
 
             if (this.data[compressedCursor] == byteVal){
                 compressedCursor += 1;
-                address += getCompressedName(this.data[compressedCursor]);
+                address += getCompressedName(this.data[compressedCursor] & 0xFF);
                 return address;
             }
             else {
@@ -89,7 +106,7 @@ public class Response {
                     if (this.data[compressedCursor] == 0) {
                         break;
                     }
-                    if (this.data[compressedCursor] < 0x10) {
+                    if (this.data[compressedCursor] < 0x1F) {
                         address += '.';
                     }
                     else{
@@ -113,7 +130,7 @@ public class Response {
 
             if (this.data[cursor] == byteVal){
                 cursor += 1;
-                address += getCompressedName(this.data[cursor]);
+                address += getCompressedName(this.data[cursor] & 0xFF);
                 return address;
             }
             else {
@@ -122,11 +139,11 @@ public class Response {
                 for(int x = 0; x < length; x++){
                     if (this.data[cursor] == byteVal){
                         cursor += 1;
-                        address += getCompressedName(this.data[cursor]);
+                        address += getCompressedName(this.data[cursor] & 0xFF);
                         return address;
                     }
                     else{
-                        if (this.data[cursor] < 0x10 && x != 0){
+                        if (this.data[cursor] < 0x1F && x != 0){
                             address += '.';
                         }
                         else{
@@ -153,7 +170,7 @@ public class Response {
 
             if (this.data[compressedCursor] == byteVal){
                 compressedCursor += 1;
-                address += getCompressedServerName(this.data[compressedCursor]);
+                address += getCompressedServerName(this.data[compressedCursor] & 0xFF);
                 return address;
             }
             else {
@@ -161,7 +178,7 @@ public class Response {
                     if (this.data[compressedCursor] == 0) {
                         break;
                     }
-                    if (this.data[compressedCursor] < 0x10){
+                    if (this.data[compressedCursor] < 0x1F){
                         address += '.';
                     }
                     else{
@@ -198,7 +215,7 @@ public class Response {
                         return address;
                     }
                     else{
-                        if (this.data[cursor] < 0x10 && x != 0){
+                        if (this.data[cursor] < 0x1F && x != 0){
                             address += '.';
                         }
                         else{
@@ -220,22 +237,22 @@ public class Response {
 
         while (this.data[cursor] != 0){
 
-            if (this.data[cursor] == byteVal){
+            if (this.data[cursor] == byteVal && this.answerType == 5){
                 cursor += 1;
-                address += getCompressedServerName(this.data[cursor]);
+                address += getCompressedServerName(this.data[cursor] & 0xFF);
                 return address;
             }
             else {
                 int length = this.data[cursor] & 0xFF;
                 cursor += 1;
                 for(int x = 0; x < length; x++){
-                    if (this.data[cursor] == byteVal){
+                    if (this.data[cursor] == byteVal && this.answerType == 5){
                         cursor += 1;
-                        address += getCompressedServerName(this.data[cursor]);
+                        address += getCompressedServerName(this.data[cursor] & 0xFF);
                         return address;
                     }
                     else if (this.answerType == 5){
-                        if (this.data[cursor] < 0x10 && x != 0){
+                        if (this.data[cursor] < 0x1F && x != 0){
                             address += '.';
                         }
                         else if (x != 0){
@@ -267,6 +284,10 @@ public class Response {
         return this.NSCOUNT;
     }
 
+    public int getAdditionalResourcesCount(){
+        return this.ARCOUNT;
+    }
+
     public String[] getAnswersNames(){
         return this.answersName;
     }
@@ -281,6 +302,14 @@ public class Response {
 
     public String[] getNameServersAddress(){
         return this.nameServersAddress;
+    }
+
+    public String[] getAdditionalResourcesName(){
+        return this.additionalResourcesName;
+    }
+
+    public String[] getAdditionalResourcesAddress(){
+        return this.additionalResourcesAddress;
     }
 
     public byte[] getRawResponse(){
@@ -330,5 +359,9 @@ public class Response {
 
     public int getAnswerType(){
         return this.answerType;
+    }
+
+    public DatagramPacket getPacket(){
+        return this.packet;
     }
 }

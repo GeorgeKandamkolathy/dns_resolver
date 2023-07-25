@@ -17,7 +17,7 @@ public class Client {
         InetAddress IPAddress = InetAddress.getByName(args[0]);
         int serverPort = Integer.parseInt(args[1]); 
         String name = args[2];
-        
+
         int timeout = 5000;
 
         if (args.length > 3){
@@ -41,19 +41,27 @@ public class Client {
         }
 
         clientSocket.setSoTimeout(timeout);
-        
+
         Request request = new Request(name);
 
         DatagramPacket sendPacket=new DatagramPacket(request.getRequest(),request.getCursor(),IPAddress,serverPort);
         
+
+        long startTime = System.nanoTime();
+
         clientSocket.send(sendPacket);
-        
+
         byte[] receiveData=new byte[508];
         
         DatagramPacket receivePacket = new DatagramPacket(receiveData,receiveData.length);
 
+        long duration = 0;
+
         try {
             clientSocket.receive(receivePacket);
+            long endTime = System.nanoTime();
+
+            duration = (endTime - startTime);
         }catch (SocketTimeoutException ex){
             System.out.println("\n<-> " + args[2] + " <->");
 
@@ -62,11 +70,9 @@ public class Client {
             return;
         }
 
-        byte[] responseData = receivePacket.getData();
 
-        Response response = new Response(responseData);
-
-
+        Response response = new Response(receivePacket);
+        /*
         System.out.println("\n <-> " + args[2] + " <->");
         
         System.out.println(";; ->>HEADER<<-  status: " + response.errorName() + ", id: " + response.getId());
@@ -86,7 +92,10 @@ public class Client {
         for (int i = 0; i < response.getAnswersCount(); i++){
             System.out.println(response.getAnswersNames()[i] + "    " + response.getAnswersAddress()[i]);
         }
-        System.out.println("");
+        System.out.println(";; Time: " + duration/1000000 + "ms");
+
+        */
+        System.out.println(duration/1000000);
 
         clientSocket.close();
     }
