@@ -72,7 +72,6 @@ public class Client {
 
 
         Response response = new Response(receivePacket);
-        /*
         System.out.println("\n <-> " + args[2] + " <->");
         
         System.out.println(";; ->>HEADER<<-  status: " + response.errorName() + ", id: " + response.getId());
@@ -94,7 +93,6 @@ public class Client {
         }
         System.out.println(";; Time: " + duration/1000000 + "ms");
 
-        */
         System.out.println(duration/1000000);
 
         clientSocket.close();

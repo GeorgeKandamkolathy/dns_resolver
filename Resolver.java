@@ -79,10 +79,21 @@ class Handler implements Runnable {
         return i + 1;
     }
 
+    static byte[] stringToByte(String address){
+
+        String[] addressParts = address.split("\\.");
+        byte[] bytes = new byte[addressParts.length];
+
+        for (int x = 0; x < addressParts.length; x++) {
+            bytes[x] = (byte)Integer.parseInt(addressParts[x]);
+        }
+        return bytes;
+    }
 
     public Response makeRequest(String address, int serverPort, byte[] data) throws IOException{
-        InetAddress IPAddress = InetAddress.getByName(address);
-        
+
+        InetAddress IPAddress = InetAddress.getByAddress(stringToByte(address));
+
         DatagramPacket sendPacket = new DatagramPacket(data,trim(data),IPAddress,serverPort);
 
         this.socket.send(sendPacket);
@@ -112,7 +123,7 @@ class Handler implements Runnable {
             }
             try{
                 Response response = this.makeRequest(address, 53, queryData);
-
+ 
                 if (response.getAnswersCount() > 0 || actions <= 0) {
                     return response;
                 }
@@ -137,15 +148,19 @@ class Handler implements Runnable {
 
         for (String address : data.getNameServersAddress()) {
             try{
-                Request request = new Request(address);
-                String queryAddress = data.getPacket().getAddress().toString();
-                if (data.getPacket().getAddress().toString().charAt(0) == '/'){
-                    queryAddress = data.getPacket().getAddress().toString().substring(1);
+                
+                Response nsIP = getNameServerIP(address);
+                Response response;
+                if (nsIP.getAnswersCount() > 0){
+                    response = this.makeRequest(nsIP.getAnswersAddress()[0], 53, queryData);
+                }
+                else if (nsIP.getAdditionalResourcesCount() > 0) {
+                    response = this.makeRequest(nsIP.getAdditionalResourcesAddress()[0], 53, queryData);
+                }
+                else{
+                    continue;
                 }
 
-                Response response = this.makeRequest(queryAddress, data.getPacket().getPort(), request.getRequest());
-                
-                response = this.makeRequest(address, 53, queryData);
 
                 if (response.getAnswersCount() > 0 || actions <= 0) {
                     return response;
@@ -155,12 +170,14 @@ class Handler implements Runnable {
                     if (response.errorCode() == 3 && !response.isAuthority()) {
                         return recursion(response, queryData, recursionCount+1);
                     }
+                    else if (response.errorCode() == 5 ){
+                    } 
                     else {
                         return response;
                     }
                 }
 
-                else {
+                else if (response.getNameServerCount() > 0){
                     return recursion(response, queryData, recursionCount+1);
                 }
             }
@@ -171,18 +188,45 @@ class Handler implements Runnable {
         return data;
     }
 
-    private void rootSearch(byte[] requestData) {
-        try {
-            for (int i = 0; i < roots.length; i++){
+    private Response getNameServerIP(String address) throws IOException{
+        Request request = new Request(address);
 
+        Response response = makeRequest(roots[0], 53, request.getRequest());
+        if (response.errorCode() == 1 || response.errorCode() == 2 || actions <= 0){
+            return response;
+        }
+
+        if (response.getAnswersCount() > 0){
+            if (response.getAnswerType() == 5){
+                getNameServerIP(response.getAnswersAddress()[0]);
+            }
+
+            return response;
+        }
+
+        else if (response.getNameServerCount() > 0){
+            response = recursion(response, request.getRequest(), 0);
+            if (response != null){
+                if (response.getAnswersCount() > 0 || response.getAdditionalResourcesCount() > 0 || (response.errorCode() == 3 && response.isAuthority())){
+                    
+                    if (response.getAnswerType() == 5){
+                        getNameServerIP(response.getAnswersAddress()[0]);
+                    }
+                    return response;
+                }
+            }
+        }
+
+        return response;
+    }
+
+    private Response rootSearch(byte[] requestData) throws IOException{
+            for (int i = 0; i < roots.length; i++){
                 try{
                     Response response = makeRequest(roots[i], 53, requestData);
 
                     if (response.errorCode() == 1 || response.errorCode() == 2 || actions <= 0){
-                        DatagramPacket sendPacket=new DatagramPacket(response.getRawResponse(), response.getRawResponse().length, queryPacket.getAddress(), queryPacket.getPort());
-                
-                        socket.send(sendPacket);
-                        break;                    
+                        return response;
                     }
 
                     if (response.getAnswersCount() > 0){
@@ -191,10 +235,7 @@ class Handler implements Runnable {
                             rootSearch(CNAMErequest.getRequest());
                         }
 
-                        DatagramPacket sendPacket=new DatagramPacket(response.getRawResponse(), response.getRawResponse().length, queryPacket.getAddress(), queryPacket.getPort());
-                
-                        socket.send(sendPacket);
-                        break;
+                        return response;
                     }
                     else if (response.getNameServerCount() > 0){
                         response = recursion(response, requestData, 0);
@@ -206,34 +247,33 @@ class Handler implements Runnable {
                                     rootSearch(CNAMErequest.getRequest());
                                 }
 
-                                DatagramPacket sendPacket=new DatagramPacket(response.getRawResponse(), response.getRawResponse().length,queryPacket.getAddress(), queryPacket.getPort());
-                    
-                                socket.send(sendPacket);
-                                break;
+                                return response;
                             }
                         }
                     }
 
                     if (i == roots.length-1){
-                        DatagramPacket sendPacket=new DatagramPacket(response.getRawResponse(), response.getRawResponse().length,queryPacket.getAddress(), queryPacket.getPort());
-                
-                        socket.send(sendPacket);
-                        break;
+                        return response;
                     }
                 }
                 catch (SocketTimeoutException e){
                     continue;
                 }
             }
-            return;
-        } catch (IOException ex) {
-            
-        }
+            return makeRequest(roots[0], 53, requestData);
     }
 
     @Override
     public void run() {
-        rootSearch(queryPacket.getData());
+        Response response;
+        try {
+            response = rootSearch(queryPacket.getData());
+            DatagramPacket sendPacket=new DatagramPacket(response.getRawResponse(), response.getRawResponse().length, queryPacket.getAddress(), queryPacket.getPort());
+            socket.send(sendPacket);
+        } catch (IOException e) {
+            
+            e.printStackTrace();
+        }
     }
     
 }
