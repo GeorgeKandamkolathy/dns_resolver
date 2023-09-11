@@ -16,7 +16,7 @@
             "request": "launch",
             "mainClass": "Client",
             "projectName": "Assignment_81dcaec3",
-            "args": ["maestro.orchestra.cse.unsw.edu.au", "53", "www.cse.unsw.edu"]
+            "args": ["127.0.0.1", "5300", "google.com"]
         },
           
         {

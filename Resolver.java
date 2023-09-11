@@ -43,9 +43,9 @@ class NetworkService implements Runnable {
 class Handler implements Runnable {
 
     private final DatagramSocket socket;
-    private final String[] roots;    
-    private final DatagramPacket queryPacket;    
-    private int actions;
+    private final String[] roots;
+    private final DatagramPacket queryPacket;
+    volatile private int actions;
 
     Handler( String[] roots, DatagramPacket queryPacket, int timeout) throws SocketException {
         Random rand = new Random();
@@ -66,7 +66,7 @@ class Handler implements Runnable {
         this.socket.setSoTimeout(timeout);
         this.roots = roots;
         this.queryPacket = queryPacket;
-        this.actions = 10;
+        this.actions = 128;
     }
 
     static int trim(byte[] bytes)
@@ -81,18 +81,27 @@ class Handler implements Runnable {
 
     static byte[] stringToByte(String address){
 
-        String[] addressParts = address.split("\\.");
-        byte[] bytes = new byte[addressParts.length];
+        try {
+            String[] addressParts = address.split("\\.");
+            byte[] bytes = new byte[addressParts.length];
 
-        for (int x = 0; x < addressParts.length; x++) {
-            bytes[x] = (byte)Integer.parseInt(addressParts[x]);
+            for (int x = 0; x < addressParts.length; x++) {
+                bytes[x] = (byte)Integer.parseInt(addressParts[x]);
+            }
+            return bytes;
         }
-        return bytes;
+        catch(Exception ex){
+            return new byte[0];
+        }   
+
     }
 
     public Response makeRequest(String address, int serverPort, byte[] data) throws IOException{
-
-        InetAddress IPAddress = InetAddress.getByAddress(stringToByte(address));
+        byte[] IPBytes = stringToByte(address);
+        if (IPBytes.length == 0){
+            return null;
+        }
+        InetAddress IPAddress = InetAddress.getByAddress(IPBytes);
 
         DatagramPacket sendPacket = new DatagramPacket(data,trim(data),IPAddress,serverPort);
 
@@ -123,6 +132,9 @@ class Handler implements Runnable {
             }
             try{
                 Response response = this.makeRequest(address, 53, queryData);
+                if (response == null) {
+                    continue;
+                }
  
                 if (response.getAnswersCount() > 0 || actions <= 0) {
                     return response;
@@ -150,18 +162,26 @@ class Handler implements Runnable {
             try{
                 
                 Response nsIP = getNameServerIP(address);
+                if (nsIP == null) {
+                    continue;
+                }
                 Response response;
                 if (nsIP.getAnswersCount() > 0){
                     response = this.makeRequest(nsIP.getAnswersAddress()[0], 53, queryData);
+                    if (response == null) {
+                        continue;
+                    }
                 }
                 else if (nsIP.getAdditionalResourcesCount() > 0) {
                     response = this.makeRequest(nsIP.getAdditionalResourcesAddress()[0], 53, queryData);
+                    if (response == null) {
+                        continue;
+                    }
                 }
                 else{
                     continue;
                 }
-
-
+                
                 if (response.getAnswersCount() > 0 || actions <= 0) {
                     return response;
                 }
@@ -192,10 +212,12 @@ class Handler implements Runnable {
         Request request = new Request(address);
 
         Response response = makeRequest(roots[0], 53, request.getRequest());
+        if (response == null) {
+            return null;
+        }
         if (response.errorCode() == 1 || response.errorCode() == 2 || actions <= 0){
             return response;
         }
-
         if (response.getAnswersCount() > 0){
             if (response.getAnswerType() == 5){
                 getNameServerIP(response.getAnswersAddress()[0]);
@@ -224,13 +246,15 @@ class Handler implements Runnable {
             for (int i = 0; i < roots.length; i++){
                 try{
                     Response response = makeRequest(roots[i], 53, requestData);
-
+                    if (response == null) {
+                        continue;
+                    }
                     if (response.errorCode() == 1 || response.errorCode() == 2 || actions <= 0){
                         return response;
                     }
 
                     if (response.getAnswersCount() > 0){
-                        if (response.getAnswerType() == 5){
+                        if (this.actions <= 0 || response.getAnswerType() == 5){
                             Request CNAMErequest = new Request(response.getAnswersAddress()[1]);
                             rootSearch(CNAMErequest.getRequest());
                         }
@@ -240,7 +264,7 @@ class Handler implements Runnable {
                     else if (response.getNameServerCount() > 0){
                         response = recursion(response, requestData, 0);
                         if (response != null){
-                            if (response.getAnswersCount() > 0 || (response.errorCode() == 3 && response.isAuthority())){
+                            if ( this.actions <= 0 || response.getAnswersCount() > 0 || (response.errorCode() == 3 && response.isAuthority())){
                                 
                                 if (response.getAnswerType() == 5){
                                     Request CNAMErequest = new Request(response.getAnswersAddress()[0]);
@@ -271,7 +295,7 @@ class Handler implements Runnable {
             DatagramPacket sendPacket=new DatagramPacket(response.getRawResponse(), response.getRawResponse().length, queryPacket.getAddress(), queryPacket.getPort());
             socket.send(sendPacket);
         } catch (IOException e) {
-            
+
             e.printStackTrace();
         }
     }
@@ -285,12 +309,12 @@ public class Resolver {
         
         if (args.length < 1){
             System.out.println("Error: Too few arguments");
-            System.out.println("Resolver port [timeout = 5]");
+            System.out.println("Resolver port [timeout = 10]");
             return;
         }
 
 
-        int timeout = 5000;
+        int timeout = 10000;
 
         int port = 5300;
 
@@ -304,7 +328,7 @@ public class Resolver {
         }
         catch (Exception e) {
             System.out.println("Error: Invalid Arguments");
-            System.out.println("Resolver port [timeout = 5]");
+            System.out.println("Resolver [port = 5300] [timeout = 10]");
             return;
         }
 
@@ -330,8 +354,8 @@ public class Resolver {
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-
-        NetworkService service = new NetworkService(port, 6, roots, timeout);
+        int threads = Runtime.getRuntime().availableProcessors();
+        NetworkService service = new NetworkService(port, threads-1, roots, timeout);
         System.out.println("Listening on port " + port);
         service.run();
     }

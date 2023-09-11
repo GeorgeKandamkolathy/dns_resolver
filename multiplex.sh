@@ -87,7 +87,7 @@ pids=
 echo "\nspawning clients...\n"
 
 
-out="client4.out"
+out="client$numclients.out"
 
 
 while IFS= read -r line; do

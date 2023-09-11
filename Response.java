@@ -1,7 +1,5 @@
 import java.io.*;
 import java.net.*;
-import java.util.HexFormat;
-import java.util.Random;
 
 
 public class Response {
@@ -24,27 +22,31 @@ public class Response {
     private String[] nameServersAddress;
     private String[] additionalResourcesName;
     private String[] additionalResourcesAddress;
+    private byte byteVal = (byte)0xC0;
 
     public Response(DatagramPacket responseData) {
         packet = responseData;
         data = packet.getData();
-        cursor = 11;
+        cursor = 13;
         response_id = this.data[1] & 0xFF;
-        QR = this.data[2] >> 7;
-        authority = (this.data[2] >> 2) & 1;
-        truncated = (this.data[2] >> 1) & 1;
-        rcode = this.data[3];
-        ANCOUNT = this.data[7];
-        NSCOUNT = this.data[9];
-        ARCOUNT = this.data[11];
+        QR = this.data[2] >> 7 & 0xFF;
+        authority = (this.data[2] >> 2) & 1 & 0xFF;
+        truncated = (this.data[2] >> 1) & 1 & 0xFF;
+        rcode = this.data[3] & 0xFF & 16;
+        ANCOUNT = this.data[7] & 0xFF;
+        NSCOUNT = this.data[9] & 0xFF;
+        ARCOUNT = this.data[11] & 0xFF;
         this.answersName = new String[ANCOUNT];
         this.answersAddress = new String[ANCOUNT];
         this.nameServersName = new String[NSCOUNT];
         this.nameServersAddress = new String[NSCOUNT];
         this.additionalResourcesName = new String[ARCOUNT];
         this.additionalResourcesAddress = new String[ARCOUNT];
-
-        while(this.data[cursor] != 1 && cursor < this.data.length){
+        
+        while(cursor < this.data.length){
+            if (this.data[cursor] == 1 && this.data[cursor - 1] == 0){
+                break;
+            }
             if( cursor == this.data.length - 2){
                 return;
             }
@@ -87,7 +89,6 @@ public class Response {
 
     private String getCompressedName(int compressedCursor) {
         String address = "";
-        byte byteVal = (byte)HexFormat.fromHexDigits("C0");
 
 
         if (this.data[compressedCursor] == byteVal){
@@ -98,29 +99,27 @@ public class Response {
 
         while (this.data[compressedCursor] != 0) {
 
-            int length = this.data[compressedCursor] & 0xFF ;
-
             if (this.data[compressedCursor] == byteVal){
                 compressedCursor += 1;
                 address += getCompressedName(this.data[compressedCursor] & 0xFF);
                 return address;
             }
             else {
-                //compressedCursor += 1;
-                for(int x = 0; x <= length; x++){
-                    if (this.data[compressedCursor] == 0) {
-                        break;
-                    }
-                    if (this.data[compressedCursor] < 0x1F) {
-                        address += '.';
+                int length = this.data[compressedCursor] & 0xFF ;
+                compressedCursor += 1;
+                for(int x = 0; x < length; x++){
+                    if (this.data[compressedCursor] == byteVal){
+                        compressedCursor += 1;
+                        address += getCompressedName(this.data[compressedCursor] & 0xFF);
+                        return address;
                     }
                     else{
                         address += (char)this.data[compressedCursor];
+                        compressedCursor += 1;
                     }
-                    compressedCursor += 1;
                 }
+                address += '.';
             }
-
         }
         
         return address;
@@ -128,8 +127,6 @@ public class Response {
 
     public String getName() {
         String address = "";
-        byte byteVal = (byte)HexFormat.fromHexDigits("C0");
-
 
         while (this.data[cursor] != 0){
 
@@ -148,12 +145,7 @@ public class Response {
                         return address;
                     }
                     else{
-                        if (this.data[cursor] < 0x1F && x != 0){
-                            address += '.';
-                        }
-                        else{
-                            address += (char)this.data[cursor];
-                        }
+                        address += (char)this.data[cursor];
                         cursor += 1;
                     }
                 }
@@ -167,7 +159,6 @@ public class Response {
     private String getCompressedServerName(int compressedCursor) {
         String address = "";
 
-        byte byteVal = (byte)HexFormat.fromHexDigits("C0");
 
         if (this.data[compressedCursor] == byteVal){
             compressedCursor += 1;
@@ -196,7 +187,6 @@ public class Response {
 
     private String getServerName() {
         String address = "";
-        byte byteVal = (byte)HexFormat.fromHexDigits("C0");
 
 
         while (this.data[cursor] != 0){
@@ -240,7 +230,6 @@ public class Response {
 
     private String parseAnswer() {
         String address = "";
-        byte byteVal = (byte)HexFormat.fromHexDigits("C0");
 
         while (this.data[cursor] != 0){
 
